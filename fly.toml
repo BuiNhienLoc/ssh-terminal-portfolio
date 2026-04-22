@@ -1,0 +1,21 @@
+app = 'terminal-portfolio-patient-wildflower-4348'
+primary_region = 'sjc'
+
+[build]
+
+# TCP service for SSH
+# Expose app port 2222 as external port 22 (standard SSH)
+[[services]]
+  protocol = "tcp"
+  internal_port = 2222
+
+  [[services.ports]]
+    port = 22
+
+[env]
+  PORT = "2222"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
