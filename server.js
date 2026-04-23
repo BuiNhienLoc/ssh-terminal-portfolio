@@ -105,31 +105,35 @@ const ASCII_ART = [
 // PROFILE_TEXT_LINES follow immediately below it in dim white.
 // Lines are used as-is (no auto-wrap) — keep each under RIGHT_COL_WIDTH chars.
 const NAME_LINE = [                                                 
-  '    _/                            _/_/_/              _/',
-  '   _/        _/_/      _/_/_/    _/    _/  _/    _/     ',
-  '  _/      _/    _/  _/          _/_/_/    _/    _/  _/  ',
-  ' _/      _/    _/  _/          _/    _/  _/    _/  _/   ',
-  '_/_/_/    _/_/      _/_/_/    _/_/_/      _/_/_/  _/    ',
+  '    _/                             _/_/_/              _/',
+  '   _/         _/_/      _/_/_/    _/    _/  _/    _/     ',
+  '  _/       _/    _/  _/          _/_/_/    _/    _/  _/  ',
+  ' _/       _/    _/  _/          _/    _/  _/    _/  _/   ',
+  '_/_/_/_/   _/_/      _/_/_/    _/_/_/      _/_/_/  _/    ',
 ];
 
 // const NAME_LINE = 'Loc Bui';   // ← replace with your figlet output split into lines,
 //                              //   or just a plain name string
 
 const PROFILE_TEXT_LINES = [
-  '★is a CS major & software engineer',
-  'with 5+ years of programming and',
-  'project development.',
+  '★is a software engineer & cybersecurity practitioner,',
+  '★focused on building secure, scalable systems',
+  '★and solving real-world problems through code.',
   '',
-  '★Specializes in software development',
-  'and IT security, with experience in',
-  'Computer Vision and AI.',
+  '★He works across full-stack development and',
+  '★security operations, with experience in',
+  '★SOC monitoring, penetration testing, and',
+  '★cloud-based system design.',
   '',
-  'Deep knowledge of C/C++, Java,',
-  'JavaScript, Python, and more.',
+  'Previously, he developed production-grade',
+  'applications using React, Django, and',
+  'Kubernetes, and led projects in AI, IoT,',
+  'and distributed systems.',
   '',
-  '★Punctual, open-minded, communicative.',
-  'Making the world better,',
-  'one line of code at a time.',
+  'His work sits at the intersection of',
+  'software engineering and cybersecurity,',
+  'with a strong focus on system reliability,',
+  'automation, and threat resilience.',
 ];
 
 // ─── DB setup ────────────────────────────────────────────────────────────────
@@ -709,21 +713,8 @@ function createServer() {
     throw err;
   }
 
-  // Parse the key using ssh2's parseKey utility - CRITICAL for proper SSH protocol
-  let parsedKey;
-  try {
-    parsedKey = parseKey(hostKeyBuffer);
-    if (parsedKey instanceof Error) {
-      throw parsedKey;
-    }
-    console.log('[SSH] Host key parsed successfully');
-  } catch (err) {
-    console.error('[SSH] Failed to parse host key:', err.message);
-    throw err;
-  }
-
   const serverConfig = {
-    hostKeys: [parsedKey],
+    hostKeys: [hostKeyBuffer],
   };
 
   const server = new Server(serverConfig, (client) => {
@@ -862,63 +853,40 @@ async function ensureHostKey() {
 }
 
 async function start() {
-  try {
-    console.log('[SSH] Starting server initialization...');
-    loadDotenv();
-    console.log('[SSH] Environment loaded');
+  loadDotenv();
+  await ensureHostKey();
+  await initDatabase();
+  const server = createServer();
 
-    await ensureHostKey();
-    console.log('[SSH] Host key ensured');
+  // Handle server socket errors (ToS setting, etc.)
+  server.on('error', (err) => {
+    console.error('[SSH Server] Error:', err);
+  });
 
-    await initDatabase();
-    console.log('[SSH] Database initialized');
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`✓ SSH Terminal Portfolio listening on port ${port}`);
+    console.log(`  Connect with: ssh -p 2222 <machine-ip>`);
+    console.log(`  Your IPv4: 10.249.131.137`);
 
-    const server = createServer();
-    console.log('[SSH] Server object created');
-
-    // Handle server socket errors (ToS setting, etc.)
-    server.on('error', (err) => {
-      console.error('[SSH Server] Error:', err.message, err.code);
-    });
-
-    server.listen(port, '0.0.0.0', () => {
-      console.log(`✓ SSH Terminal Portfolio listening on port ${port}`);
-      console.log(`  Connect with: ssh -p 2222 <machine-ip>`);
-      console.log(`  Your IPv4: 10.249.131.137`);
-
-      // Monkey-patch to suppress ToS setting errors on the listening socket
-      try {
-        if (server.socket) {
-          // Some systems have issues with setTosValue - suppress errors
-          const originalSetTos = server.socket.setTosValue;
-          if (originalSetTos) {
-            server.socket.setTosValue = function() {
-              try {
-                return originalSetTos.apply(this, arguments);
-              } catch (e) {
-                console.warn('[SSH] Suppressed socket ToS error:', e.message);
-              }
-            };
-          }
+    // Monkey-patch to suppress ToS setting errors on the listening socket
+    try {
+      if (server.socket) {
+        // Some systems have issues with setTosValue - suppress errors
+        const originalSetTos = server.socket.setTosValue;
+        if (originalSetTos) {
+          server.socket.setTosValue = function() {
+            try {
+              return originalSetTos.apply(this, arguments);
+            } catch (e) {
+              console.warn('[SSH] Suppressed socket ToS error:', e.message);
+            }
+          };
         }
-      } catch (e) {
-        // Ignore errors during monkey-patching
       }
-    });
-
-    server.on('clientError', (err, stream) => {
-      console.error('[SSH] Client error:', err.message);
-      try {
-        stream.end();
-      } catch (e) {
-        // Already closed
-      }
-    });
-  } catch (err) {
-    console.error('[SSH] Fatal startup error:', err.message);
-    console.error(err.stack);
-    process.exit(1);
-  }
+    } catch (e) {
+      // Ignore errors during monkey-patching
+    }
+  });
 }
 
 start().catch((err) => { console.error('Failed to start server:', err); process.exit(1); });
