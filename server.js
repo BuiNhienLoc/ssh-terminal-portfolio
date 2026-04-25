@@ -59,6 +59,21 @@ const COLORS = {
   yellow: '\x1b[33m',
 };
 
+// ─── ASCII Braille logos for tech stack ──────────────────────────────────────
+// const TECH_LOGOS = {
+//   'javascript': '⠠⠐⠠⠐\n⠋⠉⠋⠉\n⠹⠹⠹⠹\n⠸⠸⠸⠸',
+//   'typescript': '⠠⠐⠠⠐\n⠞⠖⠞⠖\n⠖⠖⠖⠖\n⠖⠖⠖⠖',
+//   'react': '⠺⠲⠢⠲\n⠸⠀⠀⠸\n⠈⠉⠁⠈\n⠀⠀⠀⠀',
+//   'nodejs': '⠀⠢⠠⠀\n⠈⠢⠠⠁\n⠀⠲⠦⠀\n⠀⠀⠀⠀',
+//   'python': '⠒⠒⠒⠒\n⠒⠀⠀⠒\n⠒⠀⠀⠒\n⠒⠒⠒⠒',
+//   'django': '⠠⠠⠠⠠\n⠬⠬⠬⠬\n⠌⠋⠋⠋\n⠀⠀⠀⠀',
+//   'mongodb': '⠉⠁⠁⠉\n⠛⠅⠅⠛\n⠉⠁⠁⠉\n⠀⠀⠀⠀',
+//   'kubernetes': '⠠⠌⠠⠌\n⠸⠢⠸⠢\n⠘⠢⠘⠢\n⠀⠠⠀⠠',
+//   'docker': '⠒⠒⠒⠒\n⠰⠤⠰⠤\n⠐⠒⠐⠒\n⠰⠰⠰⠰',
+//   'aws': '⠛⠛⠛⠛\n⠸⠀⠀⠸\n⠈⠉⠉⠈\n⠀⠀⠀⠀',
+//   'default': '⠈⠐⠈⠐\n⠋⠉⠋⠉\n⠹⠹⠹⠹\n⠸⠸⠸⠸',
+// };
+
 // ── Swap ASCII_ART with your ASCII Image Converter output ────────────────────
 // Each string is one line of the portrait; leading spaces are intentional.
 // Update ASCII_COL_WIDTH above to match the widest line after you swap it in.
@@ -225,6 +240,50 @@ async function getCertificates() {
   catch { return []; }
 }
 
+// ─── Contact data + braille logos ────────────────────────────────────────────
+const CONTACTS = [
+  {
+    // abbr: 'IG',
+    platform: 'Instagram',
+    url: 'instagram.com/nhienloc',
+    logo: [
+      '⢠⡶⠛⠛⠛⠛⠛⢛⢶⡄',
+      '⣿⠀⠀⣤⠶⠶⣤⠛⠁⣿',
+      '⣿⠀⢸⡇⠀⠀⢸⡇⠀⣿',
+      '⣿⠀⠀⠛⠶⠶⠛⠀⠀⣿',
+      '⠘⠷⣤⣤⣤⣤⣤⣤⠾⠋',
+    ],
+  },
+  {
+    // abbr: 'LI',
+    platform: 'LinkedIn',
+    url: 'linkedin.com/in/loc-bui-nhien',
+    logo: [
+      '⢠⢶⡢⠀⠀⠀⠀⠀⠀⠀',
+      '⠀⣉⡁⢀⣀⡀⣀⣄⡀⠀',
+      '⢈⣿⡇⠠⡿⡏⠋⢻⣟⡆',
+      '⠠⣷⡇⠐⣿⠇⠀⢐⣿⡅',
+      '⠐⠛⠃⠈⠛⠃⠀⠐⠛⠅',
+    ],
+  },
+  {
+    // abbr: 'GH',
+    platform: 'GitHub',
+    url: 'github.com/BuiNhienLoc',
+    logo: [
+      '⠀⢠⣴⣾⣟⣿⡾⣦⣀⠀',
+      '⣰⣿⠂⠈⠁⠉⠁⠨⣿⡆',
+      '⢿⣗⠀⠀⠀⠀⠀⠀⣳⣿',
+      '⠹⣟⢦⡤⠀⠀⢤⣶⢿⠇',
+      '⠀⠘⠲⢆⠀⠀⠽⠛⠁⠀',
+    ],
+  },
+];
+
+function getContacts() {
+  return CONTACTS;
+}
+
 // ─── ANSI helpers ────────────────────────────────────────────────────────────
 
 /** Move cursor to absolute row/col (1-indexed). */
@@ -347,20 +406,37 @@ function drawSectionHeader(stream, title) {
   return 4; // content starts at row 4 (blank gap after divider)
 }
 
+// ─── Sparkle animation helper ────────────────────────────────────────────────
+// const SPARKLES = ['✨', '⭐', '✦', '✧', '•', '◦'];
+// let sparkleFrame = 0;
+// function getSparkle() {
+//   return SPARKLES[sparkleFrame++ % SPARKLES.length];
+// }
+
 // ─── Generic list renderer ────────────────────────────────────────────────────
 /**
- * Renders a navigable list.
+ * Renders a navigable list with overflow handling (pagination).
  *
  * @param {object[]} items      - Array of { label, sublabel? }
  * @param {number}   selected   - Currently highlighted index
  * @param {number}   startRow   - Row to begin rendering (1-indexed)
+ * @param {object}   pagination - { page, itemsPerPage }
+ * @returns {object} { totalPages, currentPage }
  */
-function drawList(stream, items, selected, startRow) {
-  items.forEach((item, i) => {
+function drawList(stream, items, selected, startRow, pagination = { page: 0, itemsPerPage: 10 }) {
+  const { itemsPerPage } = pagination;
+  const totalPages = Math.max(1, Math.ceil(items.length / itemsPerPage));
+  const currentPage = pagination.page;
+  const start = currentPage * itemsPerPage;
+  const end = Math.min(start + itemsPerPage, items.length);
+  const pageItems = items.slice(start, end);
+  
+  pageItems.forEach((item, i) => {
+    const actualIndex = start + i;
     stream.write(moveTo(startRow + i * 2, 1));
     stream.write('\x1b[2K'); // clear line
-    if (i === selected) {
-      stream.write(`  ${COLORS.cyan}${COLORS.bold}✦ ${item.label}${COLORS.reset}`);
+    if (actualIndex === selected) {
+      stream.write(`  ${COLORS.cyan}${COLORS.bold} ${item.label}${COLORS.reset}`);
     } else {
       stream.write(`  ${COLORS.dim}  ${item.label}${COLORS.reset}`);
     }
@@ -370,10 +446,14 @@ function drawList(stream, items, selected, startRow) {
       stream.write(`    ${COLORS.dim}${item.sublabel}${COLORS.reset}`);
     }
   });
-  // Footer hint
-  const footerRow = startRow + items.length * 2 + 1;
+  // Footer hint with pagination info
+  const footerRow = startRow + pageItems.length * 2 + 1;
   stream.write(moveTo(footerRow, 1));
-  stream.write(`${COLORS.dim}[↑ ↓ to select · enter to open · esc back]${COLORS.reset}`);
+  stream.write('\x1b[2K');
+  const pageInfo = totalPages > 1 ? ` · Page ${currentPage + 1}/${totalPages}` : '';
+  stream.write(`${COLORS.dim}[↑ ↓ select · enter open · esc back${pageInfo}]${COLORS.reset}`);
+  
+  return { totalPages, currentPage, itemsPerPage, start, end };
 }
 
 // ─── Detail view renderer ─────────────────────────────────────────────────────
@@ -415,13 +495,26 @@ async function runSection(stream, title, items, buildDetail) {
 
   let selected = 0;
   let inDetail  = false;
-
+  let currentPage = 0;
+  const ITEMS_PER_PAGE = 10;
   const LIST_START_ROW = 4;
+
+  const getVisibleIndex = () => {
+    // Returns the index of the selected item in the full list
+    return selected;
+  };
 
   const renderList = () => {
     drawSectionHeader(stream, title);
     const listItems = items.map(buildDetail).map(d => ({ label: d.listLabel, sublabel: d.listSublabel }));
-    drawList(stream, listItems, selected, LIST_START_ROW);
+    
+    // Auto-adjust page if selected item is out of current page
+    const newPage = Math.floor(selected / ITEMS_PER_PAGE);
+    if (newPage !== currentPage) {
+      currentPage = newPage;
+    }
+    
+    drawList(stream, listItems, selected, LIST_START_ROW, { page: currentPage, itemsPerPage: ITEMS_PER_PAGE });
   };
 
   const renderDetail = () => {
@@ -453,8 +546,23 @@ async function runSection(stream, title, items, buildDetail) {
               renderList();
               i += 3; continue;
             }
-            // Left / right ignored inside section
-            if (code === 0x43 || code === 0x44) { i += 3; continue; }
+            // Left arrow: page up
+            if (code === 0x44 && !inDetail && currentPage > 0) {
+              currentPage--;
+              selected = currentPage * ITEMS_PER_PAGE;
+              renderList();
+              i += 3; continue;
+            }
+            // Right arrow: page down
+            if (code === 0x43 && !inDetail) {
+              const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+              if (currentPage < totalPages - 1) {
+                currentPage++;
+                selected = currentPage * ITEMS_PER_PAGE;
+                renderList();
+              }
+              i += 3; continue;
+            }
             i += 3; continue;
           }
           // Bare ESC or ESC [ something-else → go back
@@ -579,6 +687,76 @@ function certificateDescriptor(c) {
   };
 }
 
+// ─── Custom Contact section renderer ─────────────────────────────────────────
+// Displays all contacts at once with their braille logos — no list/detail nav.
+// Layout (each contact block):
+//
+//   [LOGO col]  [ABBR]  [URL]
+//   (5 rows)
+//   (blank gap)
+//
+async function runContactSection(stream) {
+  const contacts = getContacts();
+
+  const render = () => {
+    clearScreen(stream);
+
+    // Section header
+    stream.write(moveTo(1, 1));
+    stream.write(`${COLORS.cyan}${COLORS.bold}Contacts${COLORS.reset}`);
+    stream.write(moveTo(2, 1));
+    stream.write(`${COLORS.dim}${'─'.repeat(40)}${COLORS.reset}`);
+
+    const LOGO_COL   = 3;   // column where braille logo starts
+    // const ABBR_COL   = 16;  // column for the short label (IG / LI / GH)
+    const URL_COL    = 16;  // column for the URL
+    const LOGO_ROWS  = 5;   // each logo is 5 rows tall
+    const GAP        = 2;   // blank rows between contacts
+
+    let row = 4;  // content starts here
+
+    for (const c of contacts) {
+      // Braille logo — cyan
+      for (let i = 0; i < c.logo.length; i++) {
+        stream.write(moveTo(row + i, LOGO_COL));
+        stream.write(`${COLORS.cyan}${c.logo[i]}${COLORS.reset}`);
+      }
+
+      // Abbr — bold cyan, vertically centred on logo (row 2 of 5)
+      const midRow = row + 2;
+      // stream.write(moveTo(midRow, ABBR_COL));
+      // stream.write(`${COLORS.cyan}${COLORS.bold}${c.abbr}${COLORS.reset}`);
+
+      // URL — dim, same row as abbr
+      stream.write(moveTo(midRow, URL_COL));
+      stream.write(`${COLORS.dim}${c.url}${COLORS.reset}`);
+
+      row += LOGO_ROWS + GAP;
+    }
+
+    // Footer
+    stream.write(moveTo(row + 1, 1));
+    stream.write(`${COLORS.dim}[esc] back${COLORS.reset}`);
+  };
+
+  render();
+
+  return new Promise((resolve) => {
+    const onData = (data) => {
+      const buf = data.toString('utf8');
+      for (let i = 0; i < buf.length; i++) {
+        const cc = buf.charCodeAt(i);
+        // ESC, q, Q, ctrl-c all go back / quit
+        if (cc === 0x1b) { stream.removeListener('data', onData); resolve(); return; }
+        if (buf[i] === 'q' || buf[i] === 'Q' || cc === 0x03) {
+          stream.removeListener('data', onData); resolve('quit'); return;
+        }
+      }
+    };
+    stream.on('data', onData);
+  });
+}
+
 // ─── Main session handler ────────────────────────────────────────────────────
 async function handleSession(stream) {
   let currentMenuIndex = 0;
@@ -604,6 +782,57 @@ async function handleSession(stream) {
   };
 
   redrawFull();
+
+  // ── Sparkle animation around the name ──────────────────────────────────────
+  // Each tick writes one sparkle char near the name, then erases it next tick.
+  // Positions are scattered around RIGHT_COL_START at rows 1–5 (name rows).
+  const SPARK_CHARS = ['✦', '✧', '⋆', '·', '˚', '*', '⭑', '✶'];
+  const SPARK_POSITIONS = [];
+  // Scatter positions: a few to the left of the name, a few above/below
+  const nameStartCol = RIGHT_COL_START;
+  for (let r = 0; r <= 6; r++) {
+    // left fringe
+    SPARK_POSITIONS.push({ row: r + 1, col: nameStartCol - 2 });
+    SPARK_POSITIONS.push({ row: r + 1, col: nameStartCol - 4 });
+    // right fringe (name is ~55 chars wide)
+    SPARK_POSITIONS.push({ row: r + 1, col: nameStartCol + 57 });
+    SPARK_POSITIONS.push({ row: r + 1, col: nameStartCol + 59 });
+  }
+
+  let sparkTimer = null;
+  let sparkActive = [];
+
+  const tickSparkle = () => {
+    if (inSection) return;
+
+    // Erase previous sparkles
+    for (const s of sparkActive) {
+      stream.write(moveTo(s.row, s.col));
+      stream.write(' ');
+    }
+    sparkActive = [];
+
+    // Random count between 3 and 5
+    const count = Math.floor(Math.random() * 3) + 3;
+
+    // Shuffle positions to avoid duplicates
+    const shuffled = [...SPARK_POSITIONS].sort(() => Math.random() - 0.5);
+
+    for (let i = 0; i < count; i++) {
+      const pos = shuffled[i];
+      const ch  = SPARK_CHARS[Math.floor(Math.random() * SPARK_CHARS.length)];
+
+      stream.write(moveTo(pos.row, pos.col));
+      stream.write(`${COLORS.cyan}${ch}${COLORS.reset}`);
+
+      sparkActive.push(pos);
+    }
+
+    // Park cursor off-screen
+    stream.write(moveTo(100, 1));
+  };
+
+  sparkTimer = setInterval(tickSparkle, 220);
 
   return new Promise((resolve) => {
     stream.on('data', async (data) => {
@@ -638,6 +867,7 @@ async function handleSession(stream) {
           const charCode = inputBuffer.charCodeAt(0);
 
           if (char === 'q' || char === 'Q' || charCode === 0x03) {
+            if (sparkTimer) clearInterval(sparkTimer);
             stream.write('\x1b[?1049l');
             stream.write('\x1b[?25h');
             stream.write('\n\nGoodbye!\n');
@@ -668,6 +898,8 @@ async function handleSession(stream) {
               } else if (currentMenuIndex === 4) {
                 const data = await getCertificates();
                 result = await runSection(stream, 'Certificates', data, certificateDescriptor);
+              } else if (currentMenuIndex === 5) {
+                result = await runContactSection(stream);
               }
             } catch (err) {
               console.error('Section error:', err);
@@ -676,6 +908,7 @@ async function handleSession(stream) {
             inSection = false;
 
             if (result === 'quit') {
+              if (sparkTimer) clearInterval(sparkTimer);
               stream.write('\x1b[?1049l');
               stream.write('\x1b[?25h');
               stream.write('\n\nGoodbye!\n');
@@ -693,8 +926,8 @@ async function handleSession(stream) {
       }
     });
 
-    stream.on('close', resolve);
-    stream.on('error', (err) => { console.error('Stream error:', err); resolve(); });
+    stream.on('close', () => { if (sparkTimer) clearInterval(sparkTimer); resolve(); });
+    stream.on('error', (err) => { if (sparkTimer) clearInterval(sparkTimer); console.error('Stream error:', err); resolve(); });
   });
 }
 
