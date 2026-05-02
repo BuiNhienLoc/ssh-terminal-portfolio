@@ -40,6 +40,12 @@ function loadDotenv() {
   }
 }
 
+// ─── Traffic logger ──────────────────────────────────────────────────────────
+function logTraffic(event, data = {}) {
+  const entry = { time: new Date().toISOString(), event, ...data };
+  console.log('[TRAFFIC]', JSON.stringify(entry));
+}
+
 // ─── Layout constants ────────────────────────────────────────────────────────
 // After you drop in your real ASCII art, set ASCII_COL_WIDTH to the width
 // (in characters) of your widest art line.  Everything else auto-follows.
@@ -301,79 +307,102 @@ function clearScreen(stream) {
   stream.write('\x1b[2J\x1b[H');
 }
 
+// ─── Responsive layout ───────────────────────────────────────────────────────
+// Called on every redraw with the live terminal width.
+// Returns a layout object consumed by drawHeader and drawMenu.
+//
+//  cols ≥ 130  → full side-by-side (portrait left, bio right)
+//  cols < 130  → narrow: hide portrait, full-width bio
+//
+function computeLayout(cols) {
+  const c = cols || 130;
+  if (c >= 130) {
+    return {
+      showArt:    true,
+      artWidth:   ASCII_COL_WIDTH,
+      rightStart: ASCII_COL_WIDTH + 3,
+      rightWidth: Math.min(c - ASCII_COL_WIDTH - 4, 60),
+    };
+  }
+  return {
+    showArt:    false,
+    artWidth:   0,
+    rightStart: 3,
+    rightWidth: c - 6,
+  };
+}
+
 // ─── Header renderer ─────────────────────────────────────────────────────────
-/**
- * Draws the two-panel header using absolute cursor positioning.
- *
- *   Left  (col 1 … ASCII_COL_WIDTH)    → ASCII portrait in cyan
- *   Right (col RIGHT_COL_START …)      → bold NAME_LINE, then dim bio lines
- *
- * Absolute positioning means the two panels are completely independent —
- * ANSI colour codes in the art never push the bio text out of alignment.
- *
- * Returns the 1-indexed row number of the first line BELOW the header.
- */
-function drawHeader(stream) {
-  // ── Left panel: braille portrait ─────────────────────────────────────────
-  for (let i = 0; i < ASCII_ART.length; i++) {
-    stream.write(moveTo(i + 1, 1));
-    stream.write(`${COLORS.cyan}${ASCII_ART[i]}${COLORS.reset}`);
+function drawHeader(stream, layout) {
+  const { showArt, rightStart, rightWidth } = layout;
+
+  // ── Left panel: braille portrait (only when terminal is wide enough) ──────
+  if (showArt) {
+    for (let i = 0; i < ASCII_ART.length; i++) {
+      stream.write(moveTo(i + 1, 1));
+      stream.write(`${COLORS.cyan}${ASCII_ART[i]}${COLORS.reset}`);
+    }
   }
 
   // ── Right panel ───────────────────────────────────────────────────────────
   let rightRow = 1;
 
-  // Name: bold cyan — large visual anchor
   if (NAME_LINE) {
-    if (Array.isArray(NAME_LINE)) {
-      for (const line of NAME_LINE) {
-        stream.write(moveTo(rightRow, RIGHT_COL_START));
-        stream.write(`${COLORS.cyan}${COLORS.bold}${line}${COLORS.reset}`);
-        rightRow++;
-      }
+    const nameLines = Array.isArray(NAME_LINE) ? NAME_LINE : [NAME_LINE];
+    for (const line of nameLines) {
+      stream.write(moveTo(rightRow, rightStart));
+      const display = line.length > rightWidth ? line.slice(0, rightWidth) : line;
+      stream.write(`${COLORS.cyan}${COLORS.bold}${display}${COLORS.reset}`);
       rightRow++;
-    } else {
-      stream.write(moveTo(rightRow, RIGHT_COL_START));
-      stream.write(`${COLORS.cyan}${COLORS.bold}${NAME_LINE}${COLORS.reset}`);
-      rightRow += 2;
-    }
-  }
-
-  // Bio lines:
-  //   ★prefix  → bold bright white  (matches "She also works…" bold in screenshot)
-  //   ''        → blank row (paragraph gap)
-  //   plain     → dim  (body copy)
-  for (const line of PROFILE_TEXT_LINES) {
-    if (!line) {
-      rightRow++;   // blank spacer row
-      continue;
-    }
-    stream.write(moveTo(rightRow, RIGHT_COL_START));
-    if (line.startsWith('★')) {
-      stream.write(`${COLORS.bold}${line.slice(1)}${COLORS.reset}`);
-    } else {
-      stream.write(`${COLORS.dim}${line}${COLORS.reset}`);
     }
     rightRow++;
   }
 
-  const headerRows = Math.max(ASCII_ART.length, rightRow);
-  return headerRows + 2;
+  for (const line of PROFILE_TEXT_LINES) {
+    if (!line) { rightRow++; continue; }
+    stream.write(moveTo(rightRow, rightStart));
+    const display = line.length > rightWidth ? line.slice(0, rightWidth) : line;
+    if (display.startsWith('★')) {
+      stream.write(`${COLORS.bold}${display.slice(1)}${COLORS.reset}`);
+    } else {
+      stream.write(`${COLORS.dim}${display}${COLORS.reset}`);
+    }
+    rightRow++;
+  }
+
+  const artRows = showArt ? ASCII_ART.length : 0;
+  return Math.max(artRows, rightRow) + 2;
 }
 
 // ─── Menu renderer ───────────────────────────────────────────────────────────
-function drawMenu(stream, currentIndex, startRow) {
+function drawMenu(stream, currentIndex, startRow, layout) {
+  const wide = layout ? layout.showArt : true;
   const items = MENU_ITEMS.map((item, i) =>
     i === currentIndex
       ? `${COLORS.cyan}${COLORS.bold}[ ${item} ]${COLORS.reset}`
       : `${COLORS.dim}${item}${COLORS.reset}`
   );
+  const sep = `  ${COLORS.dim}◆${COLORS.reset}  `;
 
   stream.write(moveTo(startRow, 1));
-  stream.write(`  ${items.join(`  ${COLORS.dim}◆${COLORS.reset}  `)}`);
+  stream.write('[2K');
 
-  stream.write(moveTo(startRow + 1, 1));
-  stream.write(`  ${COLORS.dim}[← → to navigate · Enter to select · Q to quit]${COLORS.reset}`);
+  if (wide) {
+    // All items on one line
+    stream.write(`  ${items.join(sep)}`);
+    stream.write(moveTo(startRow + 1, 1));
+    stream.write('[2K');
+    stream.write(`  ${COLORS.yellow}${COLORS.bold}[Use ← → to navigate · Enter to select · Q to quit]${COLORS.reset}`);
+  } else {
+    // Two rows of 3 items each for narrow terminals
+    stream.write(`  ${items.slice(0, 3).join(sep)}`);
+    stream.write(moveTo(startRow + 1, 1));
+    stream.write('[2K');
+    stream.write(`  ${items.slice(3).join(sep)}`);
+    stream.write(moveTo(startRow + 2, 1));
+    stream.write('[2K');
+    stream.write(`  ${COLORS.yellow}${COLORS.bold}[Use ← → to navigate · Enter to select · Q to quit]${COLORS.reset}`);
+  }
 }
 
 // ─── Text helpers ────────────────────────────────────────────────────────────
@@ -451,7 +480,7 @@ function drawList(stream, items, selected, startRow, pagination = { page: 0, ite
   stream.write(moveTo(footerRow, 1));
   stream.write('\x1b[2K');
   const pageInfo = totalPages > 1 ? ` · Page ${currentPage + 1}/${totalPages}` : '';
-  stream.write(`${COLORS.dim}[↑ ↓ select · enter open · esc back${pageInfo}]${COLORS.reset}`);
+  stream.write(`${COLORS.yellow}${COLORS.bold}[Use ↑ ↓ to select · Enter to open · Esc to back${pageInfo}]${COLORS.reset}`);
   
   return { totalPages, currentPage, itemsPerPage, start, end };
 }
@@ -482,7 +511,7 @@ function drawDetail(stream, title, bodyLines, linkLine) {
 
   row += 2;
   stream.write(moveTo(row, 1));
-  stream.write(`${COLORS.dim}[esc] back${COLORS.reset}`);
+  stream.write(`${COLORS.yellow}${COLORS.bold}[Use Esc to back]${COLORS.reset}`);
 }
 
 // ─── Section handlers ─────────────────────────────────────────────────────────
@@ -608,7 +637,7 @@ function projectDescriptor(p) {
   ];
   return {
     listLabel:    p.title,
-    listSublabel: skills,
+    // listSublabel: skills,
     detailTitle:  p.title,
     bodyLines,
     linkLine:     p.repo_url || null,
@@ -736,7 +765,7 @@ async function runContactSection(stream) {
 
     // Footer
     stream.write(moveTo(row + 1, 1));
-    stream.write(`${COLORS.dim}[esc] back${COLORS.reset}`);
+    stream.write(`${COLORS.yellow}${COLORS.bold}[Use Esc to back]${COLORS.reset}`);
   };
 
   render();
@@ -757,79 +786,283 @@ async function runContactSection(stream) {
   });
 }
 
+// ─── Experience timeline ─────────────────────────────────────────────────────
+function experienceTimelineDescriptor(exp) {
+  const period = exp.exp_startYear
+    ? `${exp.exp_startYear}${exp.exp_endYear ? ` – ${exp.exp_endYear}` : ' – Present'}`
+    : '';
+  return {
+    title:       exp.exp_title,
+    company:     exp.exp_company || '',
+    period,
+    description: exp.exp_description || '',
+  };
+}
+
+function drawTimeline(stream, title, items, selected) {
+  clearScreen(stream);
+  let out = '';
+
+  out += moveTo(1, 1);
+  out += `${COLORS.cyan}${COLORS.bold}${title}${COLORS.reset}`;
+  out += moveTo(2, 1);
+  out += `${COLORS.dim}${'─'.repeat(50)}${COLORS.reset}`;
+
+  let row = 4;
+
+  items.forEach((item, i) => {
+    const isSelected = i === selected;
+    const isLast     = i === items.length - 1;
+
+    const dot  = isSelected ? `${COLORS.cyan}${COLORS.bold}●${COLORS.reset}` : `${COLORS.dim}○${COLORS.reset}`;
+    const pipe = isLast ? ' ' : `${COLORS.dim}│${COLORS.reset}`;
+
+    // Title row
+    out += moveTo(row, 3);
+    out += dot;
+    out += moveTo(row, 7);
+    out += isSelected
+      ? `${COLORS.cyan}${COLORS.bold}${item.title}${COLORS.reset}`
+      : `${COLORS.bold}${item.title}${COLORS.reset}`;
+
+    // Company · period
+    out += moveTo(row + 1, 3);
+    out += pipe;
+    out += moveTo(row + 1, 7);
+    out += `${COLORS.dim}${item.company} • ${item.period}${COLORS.reset}`;
+
+    // Description (up to 3 lines)
+    // const wrapped = hardWrap(item.description, 72).slice(0, 3);
+    // for (let j = 0; j < wrapped.length; j++) {
+    //   out += moveTo(row + 2 + j, 3);
+    //   out += pipe;
+    //   out += moveTo(row + 2 + j, 7);
+    //   out += `${COLORS.dim}${wrapped[j]}${COLORS.reset}`;
+    // }
+
+    row += 3; // title + company + desc lines + gap
+  });
+
+  out += moveTo(row + 1, 1);
+  out += `${COLORS.yellow}${COLORS.bold}[Use ↑ ↓ to select · Enter to open · Esc to back]${COLORS.reset}`;
+
+  stream.write(out);
+}
+
+async function runTimelineSection(stream, title, rawItems, buildItem, sessionInfo = {}) {
+  let selected = 0;
+  let inDetail  = false;
+  const items   = rawItems.map(buildItem);
+
+  const renderTimeline = () => drawTimeline(stream, title, items, selected);
+
+  const renderDetail = () => {
+    const item = items[selected];
+    const bodyLines = [
+      `${COLORS.dim}${item.company}${COLORS.reset}`,
+      `${COLORS.dim}${item.period}${COLORS.reset}`,
+      '',
+      ...hardWrap(item.description, 72),
+    ];
+    drawDetail(stream, item.title, bodyLines, null);
+  };
+
+  renderTimeline();
+
+  return new Promise((resolve) => {
+    const onData = (data) => {
+      const buf = data.toString('utf8');
+      for (let i = 0; i < buf.length;) {
+        if (buf.charCodeAt(i) === 0x1b) {
+          if (i + 2 < buf.length && buf.charCodeAt(i + 1) === 0x5b) {
+            const code = buf.charCodeAt(i + 2);
+            if (code === 0x41 && !inDetail) { // up
+              selected = (selected - 1 + items.length) % items.length;
+              renderTimeline(); i += 3; continue;
+            }
+            if (code === 0x42 && !inDetail) { // down
+              selected = (selected + 1) % items.length;
+              renderTimeline(); i += 3; continue;
+            }
+            i += 3; continue;
+          }
+          if (inDetail) { inDetail = false; renderTimeline(); }
+          else { stream.removeListener('data', onData); resolve(); }
+          i++; continue;
+        }
+        const ch = buf[i], cc = buf.charCodeAt(i);
+        if (cc === 0x0d || cc === 0x0a) {
+          if (!inDetail && items.length > 0) {
+            inDetail = true;
+            logTraffic('experience_opened', { ...sessionInfo, experience: items[selected].title });
+            renderDetail();
+          } else if (inDetail) { inDetail = false; renderTimeline(); }
+          i++; continue;
+        }
+        if (ch === 'q' || ch === 'Q' || cc === 0x03) {
+          stream.removeListener('data', onData); resolve('quit'); return;
+        }
+        i++;
+      }
+    };
+    stream.on('data', onData);
+  });
+}
+
+// ─── Full-screen size warning ────────────────────────────────────────────────
+// Shown before the main UI if the terminal is too narrow.
+// Returns a Promise that resolves when the user presses any key.
+const MIN_COLS = 133;
+const MIN_ROWS = 38;
+
+async function showSizeWarning(stream, termSize) {
+  return new Promise((resolve) => {
+    let resolved = false;
+
+    const cleanup = () => {
+      if (resolved) return;
+      resolved = true;
+      clearInterval(resizeInterval);
+      stream.removeListener('data', onKey);
+      clearScreen(stream);
+      resolve();
+    };
+
+    const render = () => {
+      clearScreen(stream);
+
+      const cols = termSize.cols;
+      const rows = termSize.rows;
+
+      const lines = [
+        '',
+        '  ┌─────────────────────────────────────────────┐',
+        '  │                                             │',
+        '  │   ⚠  Please resize your terminal window     │',
+        '  │                                             │',
+        `  │   Current : ${String(cols).padStart(3)} cols × ${String(rows).padStart(2)} rows              │`,
+        `  │   Required: ${String(MIN_COLS).padStart(3)} cols × ${String(MIN_ROWS).padStart(2)} rows              │`,
+        '  │                                             │',
+        '  │   Expand to full screen for the best        │',
+        '  │   experience, or press any key to continue. │',
+        '  │                                             │',
+        '  └─────────────────────────────────────────────┘',
+      ];
+
+      for (let i = 0; i < lines.length; i++) {
+        stream.write(moveTo(i + 1, 1));
+        stream.write(
+          i === 3
+            ? `${COLORS.yellow}${lines[i]}${COLORS.reset}`
+            : `${COLORS.cyan}${lines[i]}${COLORS.reset}`
+        );
+      }
+
+      const barFull = Math.round((cols / MIN_COLS) * 30);
+      const barEmpty = 30 - barFull;
+      const bar = '█'.repeat(Math.min(barFull, 30)) + '░'.repeat(Math.max(barEmpty, 0));
+
+      stream.write(moveTo(14, 3));
+      stream.write(`  ${COLORS.dim}Width: ${COLORS.reset}${COLORS.cyan}[${bar}]${COLORS.reset} ${cols}/${MIN_COLS}`);
+    };
+
+    const onKey = () => {
+      cleanup();
+    };
+
+    const resizeInterval = setInterval(() => {
+      if (termSize.cols >= MIN_COLS && termSize.rows >= MIN_ROWS) {
+        cleanup();
+        return;
+      }
+
+      render();
+    }, 300);
+
+    stream.on('data', onKey);
+    render();
+  });
+}
+
 // ─── Main session handler ────────────────────────────────────────────────────
-async function handleSession(stream) {
+async function handleSession(stream, termSize = { cols: 130, rows: 40 }, sessionInfo = {}) {
   let currentMenuIndex = 0;
   let inputBuffer = '';
   let inSection = false; // true while a section's runSection() is active
 
+  // ── Size warning: show if terminal is too small ────────────────────────────
+  if (termSize.cols < MIN_COLS || termSize.rows < MIN_ROWS) {
+    await showSizeWarning(stream, termSize);
+    // Re-hide cursor after warning (user may have pressed a key)
+    stream.write('[?25l');
+  }
+
   let menuStartRow = 0;
 
+  // Always computed fresh so window-change events take effect immediately
+  const getLayout = () => computeLayout(termSize.cols);
+
   const redrawFull = () => {
+    const layout = getLayout();
     clearScreen(stream);
-    menuStartRow = drawHeader(stream);
-    drawMenu(stream, currentMenuIndex, menuStartRow);
+    menuStartRow = drawHeader(stream, layout);
+    drawMenu(stream, currentMenuIndex, menuStartRow, layout);
     stream.write(moveTo(menuStartRow + 3, 1));
   };
 
   const redrawMenuOnly = () => {
+    const layout = getLayout();
     stream.write(moveTo(menuStartRow, 1));
     stream.write('\x1b[2K');
     stream.write(moveTo(menuStartRow + 1, 1));
     stream.write('\x1b[2K');
-    drawMenu(stream, currentMenuIndex, menuStartRow);
+    stream.write(moveTo(menuStartRow + 2, 1));
+    stream.write('\x1b[2K');
+    drawMenu(stream, currentMenuIndex, menuStartRow, layout);
     stream.write(moveTo(menuStartRow + 3, 1));
   };
 
   redrawFull();
 
-  // ── Sparkle animation around the name ──────────────────────────────────────
-  // Each tick writes one sparkle char near the name, then erases it next tick.
-  // Positions are scattered around RIGHT_COL_START at rows 1–5 (name rows).
-  const SPARK_CHARS = ['✦', '✧', '⋆', '·', '˚', '*', '⭑', '✶'];
-  const SPARK_POSITIONS = [];
-  // Scatter positions: a few to the left of the name, a few above/below
-  const nameStartCol = RIGHT_COL_START;
-  for (let r = 0; r <= 6; r++) {
-    // left fringe
-    SPARK_POSITIONS.push({ row: r + 1, col: nameStartCol - 2 });
-    SPARK_POSITIONS.push({ row: r + 1, col: nameStartCol - 4 });
-    // right fringe (name is ~55 chars wide)
-    SPARK_POSITIONS.push({ row: r + 1, col: nameStartCol + 57 });
-    SPARK_POSITIONS.push({ row: r + 1, col: nameStartCol + 59 });
-  }
+  sessionInfo.onResize = () => {
+    if (!inSection) {
+        redrawFull();
+    }
+  };
 
-  let sparkTimer = null;
+  // ── Sparkle animation — positions derived from live layout ────────────────
+  const SPARK_CHARS = ['✦', '✧', '⋆', '·', '˚', '*', '⭑', '✶'];
+  let sparkTimer  = null;
   let sparkActive = [];
+
+  const buildSparkPositions = () => {
+    const { rightStart } = getLayout();
+    const pos = [];
+    for (let r = 0; r <= 6; r++) {
+      if (rightStart > 4) {
+        pos.push({ row: r + 1, col: rightStart - 2 });
+        pos.push({ row: r + 1, col: rightStart - 4 });
+      }
+      pos.push({ row: r + 1, col: rightStart + 57 });
+      pos.push({ row: r + 1, col: rightStart + 59 });
+    }
+    return pos;
+  };
 
   const tickSparkle = () => {
     if (inSection) return;
-
-    // Erase previous sparkles
-    for (const s of sparkActive) {
-      stream.write(moveTo(s.row, s.col));
-      stream.write(' ');
-    }
+    for (const s of sparkActive) { stream.write(moveTo(s.row, s.col) + ' '); }
     sparkActive = [];
-
-    // Random count between 3 and 5
-    const count = Math.floor(Math.random() * 3) + 3;
-
-    // Shuffle positions to avoid duplicates
-    const shuffled = [...SPARK_POSITIONS].sort(() => Math.random() - 0.5);
-
+    const positions = buildSparkPositions();
+    const count     = Math.min(Math.floor(Math.random() * 3) + 3, positions.length);
+    const shuffled  = [...positions].sort(() => Math.random() - 0.5);
     for (let i = 0; i < count; i++) {
       const pos = shuffled[i];
       const ch  = SPARK_CHARS[Math.floor(Math.random() * SPARK_CHARS.length)];
-
-      stream.write(moveTo(pos.row, pos.col));
-      stream.write(`${COLORS.cyan}${ch}${COLORS.reset}`);
-
+      stream.write(moveTo(pos.row, pos.col) + `${COLORS.cyan}${ch}${COLORS.reset}`);
       sparkActive.push(pos);
     }
-
-    // Park cursor off-screen
-    stream.write(moveTo(100, 1));
+    stream.write(moveTo(200, 1)); // park cursor
   };
 
   sparkTimer = setInterval(tickSparkle, 220);
@@ -879,6 +1112,7 @@ async function handleSession(stream) {
           if (charCode === 0x0d || charCode === 0x0a) {
             inSection = true;
             inputBuffer = '';
+            logTraffic('menu_opened', { ...sessionInfo, section: MENU_ITEMS[currentMenuIndex] });
 
             // Load data and open section
             let result;
@@ -891,7 +1125,7 @@ async function handleSession(stream) {
                 result = await runSection(stream, 'Skills', data, skillDescriptor);
               } else if (currentMenuIndex === 2) {
                 const data = await getExperiences();
-                result = await runSection(stream, 'Experiences', data, experienceDescriptor);
+                result = await runTimelineSection(stream, 'Experience Timeline', data, experienceTimelineDescriptor, sessionInfo);
               } else if (currentMenuIndex === 3) {
                 const data = await getCourses();
                 result = await runSection(stream, 'Courses', data, courseDescriptor);
@@ -937,129 +1171,130 @@ const port = process.env.PORT || 2222;
 function createServer() {
   const hostKeyPath = getHostKeyPath();
   let hostKeyBuffer;
-  
+
   try {
     hostKeyBuffer = readFileSync(hostKeyPath);
-    console.log('[SSH] Host key loaded successfully, size:', hostKeyBuffer.length, 'bytes');
+    console.log('[SSH] Host key loaded, size:', hostKeyBuffer.length, 'bytes');
   } catch (err) {
     console.error('[SSH] Failed to load host key:', err.message);
     throw err;
   }
 
-  const serverConfig = {
-    hostKeys: [hostKeyBuffer],
-  };
+  const server = new Server({ hostKeys: [hostKeyBuffer] }, (client) => {
+    const clientIp =
+        client._sock?.remoteAddress ||
+        client.socket?.remoteAddress ||
+        client.remoteAddress ||
+        'unknown';
+    let username   = 'anonymous';
+    let termSize   = { cols: 80, rows: 24 };
 
-  const server = new Server(serverConfig, (client) => {
-    console.log('[SSH] Client connected from:', client.remoteAddress);
+    logTraffic('client_connected', { ip: clientIp });
 
+    // ── Socket tweaks ───────────────────────────────────────────────────────
     try {
-      // Disable problematic socket operations that can hang
       if (client.socket) {
         try {
           client.socket.setNoDelay(true);
           client.socket.setKeepAlive(true, 60000);
         } catch (e) {
-          console.warn('[SSH] Warning setting socket options:', e.message);
+          console.warn('[SSH] Socket options warning:', e.message);
         }
-
-        // Suppress any ToS-related errors or hangs
         const origSetTos = client.socket.setTosValue;
-        if (origSetTos && typeof origSetTos === 'function') {
+        if (typeof origSetTos === 'function') {
           client.socket.setTosValue = function(val) {
-            try {
-              return origSetTos.call(this, val);
-            } catch (e) {
-              console.warn('[SSH] Suppressed socket setTosValue error');
-            }
+            try { return origSetTos.call(this, val); }
+            catch (e) { /* suppress ToS errors */ }
           };
         }
       }
     } catch (err) {
-      console.error('[SSH] Error configuring client socket:', err.message);
-      client.end();
-      return;
+      console.error('[SSH] Socket config error:', err.message);
+      client.end(); return;
     }
 
+    // ── Auth — accept all, log username ────────────────────────────────────
     client.on('authentication', (ctx) => {
       try {
-        console.log('[SSH] Authentication attempt');
+        username = ctx.username || 'anonymous';
+        logTraffic('auth_attempt', { ip: clientIp, username, method: ctx.method });
         ctx.accept();
+        logTraffic('auth_accepted', { ip: clientIp, username });
       } catch (err) {
-        console.error('[SSH] Error handling authentication:', err.message);
+        console.error('[SSH] Auth error:', err.message);
       }
     });
 
+    // ── Session ────────────────────────────────────────────────────────────
     client.on('session', (accept) => {
-      try {
-        console.log('[SSH] Session requested');
         const session = accept();
 
-        session.on('pty', (accept) => {
-          try {
-            console.log('[SSH] PTY requested');
+        let termSize = { cols: 130, rows: 40 };
+
+        const sessionInfo = {
+            ip: clientIp,
+            username,
+            onResize: null,
+        };
+
+        session.on('pty', (accept, reject, info) => {
+            termSize.cols = info.cols || termSize.cols;
+            termSize.rows = info.rows || termSize.rows;
+
+            logTraffic('pty', {
+            ip: clientIp,
+            username,
+            cols: termSize.cols,
+            rows: termSize.rows,
+            });
+
             accept();
-          } catch (err) {
-            console.error('[SSH] Error handling PTY:', err.message);
-          }
+        });
+
+        session.on('window-change', (accept, reject, info) => {
+            termSize.cols = info.cols || termSize.cols;
+            termSize.rows = info.rows || termSize.rows;
+
+            logTraffic('resize', {
+            ip: clientIp,
+            username,
+            cols: termSize.cols,
+            rows: termSize.rows,
+            });
+
+            sessionInfo.onResize?.();
+
+            if (accept) accept();
         });
 
         session.on('shell', (accept) => {
-          try {
-            console.log('[SSH] Shell requested - accepting');
             const stream = accept();
-            console.log('[SSH] Shell stream opened');
 
-            stream.write('\x1b[?1049h'); // alternate screen
-            stream.write('\x1b[?25l');   // hide cursor
+            stream.write('\x1b[?1049h');
+            stream.write('\x1b[?25l');
             stream.write('\x1b[2J\x1b[H');
-            console.log('[SSH] Initial screen codes sent');
 
-            setTimeout(() => {
-              try {
-                console.log('[SSH] Starting handleSession');
-                handleSession(stream).catch((err) => {
-                  console.error('[SSH] Session error:', err);
-                  stream.end();
-                });
-              } catch (err) {
-                console.error('[SSH] Error in handleSession:', err.message);
-                stream.end();
-              }
-            }, 300);
-          } catch (err) {
-            console.error('[SSH] Error handling shell:', err.message);
-          }
-        });
+            logTraffic('session_start', {
+            ip: clientIp,
+            username,
+            cols: termSize.cols,
+            rows: termSize.rows,
+            });
 
-        session.on('subsystem', (accept, name) => {
-          try {
-            console.log('[SSH] Subsystem requested:', name);
-            accept();
-          } catch (err) {
-            console.error('[SSH] Error handling subsystem:', err.message);
-          }
+            handleSession(stream, termSize, sessionInfo).catch((err) => {
+            console.error('[SSH] Session error:', err);
+            stream.end();
+            });
         });
-
-        session.on('error', (err) => {
-          console.error('[SSH] Session error:', err.message);
-        });
-      } catch (err) {
-        console.error('[SSH] Error handling session:', err.message);
-      }
     });
 
-    client.on('error', (err) => {
-      console.error('[SSH] Client error:', err.message, err.code);
+    client.on('error', (err) => console.error('[SSH] Client error:', err.message, err.code));
+    client.on('close', () => {
+      logTraffic('client_disconnected', { ip: clientIp, username });
     });
-    client.on('close', () => console.log('[SSH] Client disconnected'));
   });
 
-  // Handle server-level socket errors
-  server.on('error', (err) => {
-    console.error('[SSH Server Socket] Error:', err.message, err.code);
-  });
-
+  server.on('error', (err) => console.error('[SSH Server] Error:', err.message, err.code));
   return server;
 }
 
@@ -1099,7 +1334,7 @@ async function start() {
   server.listen(port, '0.0.0.0', () => {
     console.log(`✓ SSH Terminal Portfolio listening on port ${port}`);
     console.log(`  Connect with: ssh -p 2222 <machine-ip>`);
-    console.log(`  Your IPv4: 10.249.131.137`);
+    // console.log(`  Your IPv4: 10.249.131.137`);
 
     // Monkey-patch to suppress ToS setting errors on the listening socket
     try {

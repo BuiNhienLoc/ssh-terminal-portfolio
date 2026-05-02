@@ -1,21 +1,32 @@
-app = 'terminal-portfolio-patient-wildflower-4348'
+# fly.toml app configuration file generated for ssh-terminal-portfolio on 2026-04-21T19:25:49-07:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'ssh-terminal-portfolio'
 primary_region = 'sjc'
 
 [build]
 
-# TCP service for SSH
-# Expose app port 2222 as external port 22 (standard SSH)
+[env]
+  PORT = '2222'
+
+[http_service]
+  internal_port = 2222
+
 [[services]]
-  protocol = "tcp"
+  protocol = 'tcp'
   internal_port = 2222
 
   [[services.ports]]
     port = 22
 
-[env]
-  PORT = "2222"
-
 [[vm]]
-  memory = "1gb"
-  cpu_kind = "shared"
+  memory = '1gb'
+  cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 1024
+
+[mounts]
+  source = 'ssh_data'
+  destination = '/data'
