@@ -229,16 +229,41 @@ async function getExperiences() {
 }
 
 async function getCourses() {
-  try {
-    return await sql`
-      SELECT c.course_id, c.course_name, c.course_description,
-        COALESCE(json_agg(DISTINCT jsonb_build_object('id', e.edu_id, 'name', e.edu_name))
-          FILTER (WHERE e.edu_id IS NOT NULL), '[]'::json) AS provider
+  // Try both junction column names, log real errors
+  const attempts = [
+    () => sql`
+      SELECT c.course_id, c.course_name, c.course_description, c.course_important,
+        COALESCE(json_agg(DISTINCT jsonb_build_object(
+          'id', e.edu_id, 'name', e.edu_name, 'yearStart', e."edu_startYear"
+        )) FILTER (WHERE e.edu_id IS NOT NULL), '[]'::json) AS provider
       FROM courses c
       LEFT JOIN course_educations ce ON ce.course_id = c.course_id
       LEFT JOIN educations e ON e.edu_id = ce.education_id
-      GROUP BY c.course_id ORDER BY c.course_id`;
-  } catch { return []; }
+      GROUP BY c.course_id ORDER BY c.course_id`,
+    () => sql`
+      SELECT c.course_id, c.course_name, c.course_description, c.course_important,
+        COALESCE(json_agg(DISTINCT jsonb_build_object(
+          'id', e.edu_id, 'name', e.edu_name, 'yearStart', e.edu_startYear
+        )) FILTER (WHERE e.edu_id IS NOT NULL), '[]'::json) AS provider
+      FROM courses c
+      LEFT JOIN course_educations ce ON ce.course_id = c.course_id
+      LEFT JOIN educations e ON e.edu_id = ce.education_id
+      GROUP BY c.course_id ORDER BY c.course_id`,
+  ];
+  for (const attempt of attempts) {
+    try { return await attempt(); }
+    catch (err) { console.error('[DB] getCourses attempt failed:', err.message); }
+  }
+  // Fallback: courses without provider grouping
+  try {
+    return await sql`
+      SELECT course_id, course_name, course_description,
+             course_important, '[]'::json AS provider
+      FROM courses ORDER BY course_id`;
+  } catch (err) {
+    console.error('[DB] getCourses fallback failed:', err.message);
+    return [];
+  }
 }
 
 async function getCertificates() {
@@ -251,7 +276,7 @@ const CONTACTS = [
   {
     // abbr: 'IG',
     platform: 'Instagram',
-    url: 'instagram.com/nhienloc',
+    url: 'https://www.instagram.com/nhienloc',
     logo: [
       '⢠⡶⠛⠛⠛⠛⠛⢛⢶⡄',
       '⣿⠀⠀⣤⠶⠶⣤⠛⠁⣿',
@@ -263,7 +288,7 @@ const CONTACTS = [
   {
     // abbr: 'LI',
     platform: 'LinkedIn',
-    url: 'linkedin.com/in/loc-bui-nhien',
+    url: 'https://www.linkedin.com/in/loc-bui-nhien',
     logo: [
       '⢠⢶⡢⠀⠀⠀⠀⠀⠀⠀',
       '⠀⣉⡁⢀⣀⡀⣀⣄⡀⠀',
@@ -275,7 +300,7 @@ const CONTACTS = [
   {
     // abbr: 'GH',
     platform: 'GitHub',
-    url: 'github.com/BuiNhienLoc',
+    url: 'https://github.com/BuiNhienLoc',
     logo: [
       '⠀⢠⣴⣾⣟⣿⡾⣦⣀⠀',
       '⣰⣿⠂⠈⠁⠉⠁⠨⣿⡆',
@@ -479,8 +504,8 @@ function drawList(stream, items, selected, startRow, pagination = { page: 0, ite
   const footerRow = startRow + pageItems.length * 2 + 1;
   stream.write(moveTo(footerRow, 1));
   stream.write('\x1b[2K');
-  const pageInfo = totalPages > 1 ? ` · Page ${currentPage + 1}/${totalPages}` : '';
-  stream.write(`${COLORS.yellow}${COLORS.bold}[Use ↑ ↓ to select · Enter to open · Esc to back${pageInfo}]${COLORS.reset}`);
+  const pageInfo = totalPages > 1 ? `  Page ${currentPage + 1}/${totalPages}` : '';
+  stream.write(`${COLORS.yellow}${COLORS.bold}[Use ↑ ↓ to select · Enter to open · Esc to back]${COLORS.reset}${COLORS.yellow}${pageInfo}${COLORS.reset}`);
   
   return { totalPages, currentPage, itemsPerPage, start, end };
 }
@@ -700,6 +725,214 @@ function courseDescriptor(c) {
     bodyLines,
     linkLine:     null,
   };
+}
+
+// ─── Courses: paged by university, sticky header, scrollable ─────────────────
+//
+//  Layout (rows, 1-indexed):
+//    1   "Courses"  section title
+//    2   ─────────────────────────
+//    3   blank
+//    4   [University Name (year)]   ← STICKY, never scrolls away
+//    5   ·····················
+//    6…N-2  course list (scrolls if > available rows)
+//    N-1  blank
+//    N   footer hint + page indicator
+//
+//  ← → switches university page
+//  ↑ ↓ moves selection within current page (scrolls list if needed)
+//  Enter  → detail view
+//  Esc    → back to main menu
+//
+async function runCoursesSection(stream, termSize) {
+  const raw = await getCourses();
+
+  if (!raw.length) {
+    clearScreen(stream);
+    stream.write(moveTo(1, 1) + `${COLORS.cyan}${COLORS.bold}Courses${COLORS.reset}\n`);
+    stream.write(`${COLORS.dim}${'─'.repeat(40)}${COLORS.reset}\n\n`);
+    stream.write(`${COLORS.yellow}No courses found. Check DB connection.${COLORS.reset}\n\n`);
+    stream.write(`${COLORS.bold}Use${COLORS.reset} ${COLORS.cyan}[Esc]${COLORS.reset}${COLORS.dim} to go back${COLORS.reset}`);
+    return new Promise((resolve) => {
+      stream.once('data', (d) => {
+        const q = d.toString();
+        resolve(q.includes('q') || q.includes('Q') || d[0] === 0x03 ? 'quit' : undefined);
+      });
+    });
+  }
+
+  // ── Group by university, sorted oldest-first ──────────────────────────────
+  const groups = {};
+  for (const c of raw) {
+    const uni = c.provider?.length ? c.provider.map(p => p.name).join(' / ') : 'Other';
+    const yr  = c.provider?.reduce((mn, p) => {
+      const y = Number(p.yearStart);
+      return !isNaN(y) && y < mn ? y : mn;
+    }, Infinity);
+    if (!groups[uni]) groups[uni] = { yearStart: isFinite(yr) ? yr : 9999, courses: [] };
+    groups[uni].courses.push(c);
+  }
+  const pages = Object.keys(groups)
+    .sort((a, b) => groups[a].yearStart - groups[b].yearStart)
+    .map(uni => ({
+      uni,
+      year:    groups[uni].yearStart !== 9999 ? groups[uni].yearStart : null,
+      courses: groups[uni].courses.sort((a, b) => a.course_id - b.course_id),
+    }));
+
+  let pageIdx   = 0;   // current university page
+  let selIdx    = 0;   // selected course index within current page
+  let scrollTop = 0;   // first visible course index
+  let inDetail  = false;
+
+  const SECTION_TITLE_ROWS = 3;   // title + divider + blank
+  const UNI_HEADER_ROWS    = 2;   // uni name + dots line
+  const FOOTER_ROWS        = 2;   // hint + spare
+
+  // Content rows available for the scrollable course list
+  function visibleCourseRows() {
+    const rows = termSize?.rows || 40;
+    return Math.max(1, rows - SECTION_TITLE_ROWS - UNI_HEADER_ROWS - FOOTER_ROWS - 1);
+  }
+
+  // Keep selIdx visible — adjust scrollTop
+  function ensureVisible() {
+    const vis = visibleCourseRows();
+    if (selIdx < scrollTop)          scrollTop = selIdx;
+    if (selIdx >= scrollTop + vis)   scrollTop = selIdx - vis + 1;
+    if (scrollTop < 0)               scrollTop = 0;
+  }
+
+  // Reset selection + scroll when switching pages
+  function goToPage(idx) {
+    pageIdx   = (idx + pages.length) % pages.length;
+    selIdx    = 0;
+    scrollTop = 0;
+  }
+
+  const renderList = () => {
+    const page    = pages[pageIdx];
+    const courses = page.courses;
+    ensureVisible();
+    const vis     = visibleCourseRows();
+    const termRows = termSize?.rows || 40;
+
+    clearScreen(stream);
+
+    // ── Section title ───────────────────────────────────────────────────────
+    stream.write(moveTo(1, 1));
+    stream.write(`${COLORS.cyan}${COLORS.bold}Courses${COLORS.reset}`);
+    stream.write(moveTo(2, 1));
+    stream.write(`${COLORS.dim}${'─'.repeat(50)}${COLORS.reset}`);
+    // row 3 is blank
+
+    // ── Sticky university header (always row 4) ─────────────────────────────
+    const yearTag = page.year ? `${COLORS.dim} (${page.year})${COLORS.reset}` : '';
+    stream.write(moveTo(4, 3));
+    stream.write(`${COLORS.cyan}${COLORS.bold}${page.uni}${COLORS.reset}${yearTag}`);
+
+    // dots underline
+    stream.write(moveTo(5, 3));
+    stream.write(`${COLORS.dim}${'·'.repeat(Math.min(page.uni.length + 2, 60))}${COLORS.reset}`);
+
+    // ── Scrollable course list (rows 6…) ────────────────────────────────────
+    const slice = courses.slice(scrollTop, scrollTop + vis);
+    let screenRow = 6;
+    for (let i = 0; i < slice.length; i++) {
+      const courseIdx = scrollTop + i;
+      const c         = slice[i];
+      const isSel     = courseIdx === selIdx;
+      stream.write(moveTo(screenRow, 5));
+      stream.write('\x1b[2K');
+      if (isSel) {
+        stream.write(`${COLORS.cyan}${COLORS.bold}› ${c.course_name}${COLORS.reset}`);
+      } else {
+        stream.write(`${COLORS.dim}  ${c.course_name}${COLORS.reset}`);
+      }
+      screenRow++;
+    }
+
+    // ── Footer (pinned to bottom) ────────────────────────────────────────────
+    const canUp   = scrollTop > 0;
+    const canDown = scrollTop + vis < courses.length;
+    const scrollHint =
+      `${COLORS.yellow}Entry ${selIdx + 1}/${courses.length}${COLORS.reset}`
+
+    const pageHint = pages.length > 1
+      ? `  ${COLORS.yellow}School ${pageIdx + 1}/${pages.length}${COLORS.reset}`
+      : '';
+
+    stream.write(moveTo(termRows - 1, 1));
+    stream.write('\x1b[2K');
+    stream.write(
+      `${COLORS.bold}${COLORS.yellow}[Use ↑↓ to select${COLORS.reset} ·` +
+      ` ${COLORS.bold}${COLORS.yellow}← → to open${COLORS.reset} ·` +
+      ` ${COLORS.bold}${COLORS.yellow}Enter to open${COLORS.reset} ·` +
+      ` ${COLORS.bold}${COLORS.yellow}Esc to back]${COLORS.reset}` +
+      ` ${pageHint}`
+    );
+  };
+
+  const renderDetail = () => {
+    const page = pages[pageIdx];
+    const c    = page.courses[selIdx];
+    const bodyLines = [
+      `${COLORS.dim}${page.uni}${COLORS.reset}`,
+      '',
+      ...(c.course_description
+        ? hardWrap(c.course_description, 72)
+        : ['No description available.']),
+    ];
+    drawDetail(stream, c.course_name, bodyLines, null);
+  };
+
+  renderList();
+
+  return new Promise((resolve) => {
+    const onData = (data) => {
+      const buf = data.toString('utf8');
+      for (let i = 0; i < buf.length;) {
+        if (buf.charCodeAt(i) === 0x1b) {
+          if (i + 2 < buf.length && buf.charCodeAt(i + 1) === 0x5b) {
+            const code = buf.charCodeAt(i + 2);
+
+            if (!inDetail) {
+              const courses = pages[pageIdx].courses;
+              if (code === 0x41) {                              // ↑
+                selIdx = (selIdx - 1 + courses.length) % courses.length;
+                renderList(); i += 3; continue;
+              }
+              if (code === 0x42) {                              // ↓
+                selIdx = (selIdx + 1) % courses.length;
+                renderList(); i += 3; continue;
+              }
+              if (code === 0x44) { goToPage(pageIdx - 1); renderList(); i += 3; continue; } // ←
+              if (code === 0x43) { goToPage(pageIdx + 1); renderList(); i += 3; continue; } // →
+            }
+            i += 3; continue;
+          }
+          // bare ESC
+          if (inDetail) { inDetail = false; renderList(); }
+          else { stream.removeListener('data', onData); resolve(); }
+          i++; continue;
+        }
+        const ch = buf[i], cc = buf.charCodeAt(i);
+        if (cc === 0x0d || cc === 0x0a) {
+          if (!inDetail && pages[pageIdx].courses.length > 0) {
+            inDetail = true; renderDetail();
+          } else if (inDetail) {
+            inDetail = false; renderList();
+          }
+          i++; continue;
+        }
+        if (ch === 'q' || ch === 'Q' || cc === 0x03) {
+          stream.removeListener('data', onData); resolve('quit'); return;
+        }
+        i++;
+      }
+    };
+    stream.on('data', onData);
+  });
 }
 
 function certificateDescriptor(c) {
@@ -1127,8 +1360,7 @@ async function handleSession(stream, termSize = { cols: 130, rows: 40 }, session
                 const data = await getExperiences();
                 result = await runTimelineSection(stream, 'Experience Timeline', data, experienceTimelineDescriptor, sessionInfo);
               } else if (currentMenuIndex === 3) {
-                const data = await getCourses();
-                result = await runSection(stream, 'Courses', data, courseDescriptor);
+                result = await runCoursesSection(stream, termSize);
               } else if (currentMenuIndex === 4) {
                 const data = await getCertificates();
                 result = await runSection(stream, 'Certificates', data, certificateDescriptor);
