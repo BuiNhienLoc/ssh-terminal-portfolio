@@ -410,22 +410,22 @@ function drawMenu(stream, currentIndex, startRow, layout) {
   const sep = `  ${COLORS.dim}◆${COLORS.reset}  `;
 
   stream.write(moveTo(startRow, 1));
-  stream.write('[2K');
+  stream.write('[2K');
 
   if (wide) {
     // All items on one line
     stream.write(`  ${items.join(sep)}`);
     stream.write(moveTo(startRow + 1, 1));
-    stream.write('[2K');
+    stream.write('[2K');
     stream.write(`  ${COLORS.yellow}${COLORS.bold}[Use ← → to navigate · Enter to select · Q to quit]${COLORS.reset}`);
   } else {
     // Two rows of 3 items each for narrow terminals
     stream.write(`  ${items.slice(0, 3).join(sep)}`);
     stream.write(moveTo(startRow + 1, 1));
-    stream.write('[2K');
+    stream.write('[2K');
     stream.write(`  ${items.slice(3).join(sep)}`);
     stream.write(moveTo(startRow + 2, 1));
-    stream.write('[2K');
+    stream.write('[2K');
     stream.write(`  ${COLORS.yellow}${COLORS.bold}[Use ← → to navigate · Enter to select · Q to quit]${COLORS.reset}`);
   }
 }
