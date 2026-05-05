@@ -6,7 +6,6 @@
 ![Cloudflare](https://img.shields.io/badge/DNS-Cloudflare-F38020?logo=cloudflare&logoColor=white)
 ![SSH](https://img.shields.io/badge/Access-SSH-000000?logo=gnubash&logoColor=white)
 ![Docker](https://img.shields.io/badge/Container-Docker-2496ED?logo=docker&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green)
 
 An interactive, terminal-based portfolio accessible via SSH.  
 Instead of visiting a website, users connect directly through SSH and explore a fully dynamic, keyboard-driven interface.
