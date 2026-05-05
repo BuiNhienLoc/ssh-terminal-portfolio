@@ -12,6 +12,13 @@ Instead of visiting a website, users connect directly through SSH and explore a 
 
 ---
 
+## Demo Preview
+
+> Interactive SSH portfolio running directly inside a terminal.
+
+![SSH Terminal Portfolio Demo](./assets/demo.gif)
+
+
 ## 🚀 Live Demo
 
 ```bash
@@ -68,7 +75,7 @@ NeonDB (PostgreSQL)
 
 The terminal header art is generated using:
 
-https://github.com/LachlanArthur/Braille-ASCII-Art
+https://github.com/LachlanArthur/Braille-ASCII-Art \
 https://lachlanarthur.github.io/Braille-ASCII-Art/
 
 ## 🖋️ Name Fonts
