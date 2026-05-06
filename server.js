@@ -239,7 +239,7 @@ async function getCourses() {
       FROM courses c
       LEFT JOIN course_educations ce ON ce.course_id = c.course_id
       LEFT JOIN educations e ON e.edu_id = ce.education_id
-      GROUP BY c.course_id ORDER BY c.course_id`,
+      GROUP BY c.course_id ORDER BY c.course_important DESC`,
     () => sql`
       SELECT c.course_id, c.course_name, c.course_description, c.course_important,
         COALESCE(json_agg(DISTINCT jsonb_build_object(
@@ -248,7 +248,7 @@ async function getCourses() {
       FROM courses c
       LEFT JOIN course_educations ce ON ce.course_id = c.course_id
       LEFT JOIN educations e ON e.edu_id = ce.education_id
-      GROUP BY c.course_id ORDER BY c.course_id`,
+      GROUP BY c.course_id ORDER BY c.course_important DESC`,
   ];
   for (const attempt of attempts) {
     try { return await attempt(); }
@@ -410,22 +410,22 @@ function drawMenu(stream, currentIndex, startRow, layout) {
   const sep = `  ${COLORS.dim}◆${COLORS.reset}  `;
 
   stream.write(moveTo(startRow, 1));
-  stream.write('[2K');
+  stream.write('\x1b[2K');
 
   if (wide) {
     // All items on one line
     stream.write(`  ${items.join(sep)}`);
     stream.write(moveTo(startRow + 1, 1));
-    stream.write('[2K');
+    stream.write('\x1b[2K');
     stream.write(`  ${COLORS.yellow}${COLORS.bold}[Use ← → to navigate · Enter to select · Q to quit]${COLORS.reset}`);
   } else {
     // Two rows of 3 items each for narrow terminals
     stream.write(`  ${items.slice(0, 3).join(sep)}`);
     stream.write(moveTo(startRow + 1, 1));
-    stream.write('[2K');
+    stream.write('\x1b[2K');
     stream.write(`  ${items.slice(3).join(sep)}`);
     stream.write(moveTo(startRow + 2, 1));
-    stream.write('[2K');
+    stream.write('\x1b[2K');
     stream.write(`  ${COLORS.yellow}${COLORS.bold}[Use ← → to navigate · Enter to select · Q to quit]${COLORS.reset}`);
   }
 }
@@ -444,6 +444,15 @@ function hardWrap(text, width) {
   }
   if (cur) lines.push(cur);
   return lines.length ? lines : [''];
+}
+
+function wrapParagraphs(text, width) {
+  return text
+    .split('\n')
+    .flatMap((para) => {
+      if (!para.trim()) return [''];
+      return hardWrap(para, width);
+    });
 }
 
 // ─── Section: minimal header (no portrait) ───────────────────────────────────
@@ -505,7 +514,7 @@ function drawList(stream, items, selected, startRow, pagination = { page: 0, ite
   stream.write(moveTo(footerRow, 1));
   stream.write('\x1b[2K');
   const pageInfo = totalPages > 1 ? `  Page ${currentPage + 1}/${totalPages}` : '';
-  stream.write(`${COLORS.yellow}${COLORS.bold}[Use ↑ ↓ to select · Enter to open · Esc to back]${COLORS.reset}${COLORS.yellow}${pageInfo}${COLORS.reset}`);
+  stream.write(`${COLORS.yellow}${COLORS.bold}[Use ↑ ↓ to select · ← → to change page · Enter to open · Esc to back]${COLORS.reset}${COLORS.yellow}${pageInfo}${COLORS.reset}`);
   
   return { totalPages, currentPage, itemsPerPage, start, end };
 }
@@ -656,9 +665,12 @@ function projectDescriptor(p) {
   const WRAP = 72;
   const skills = p.skills?.length ? p.skills.map(s => s.name).join(', ') : null;
   const bodyLines = [
-    ...(p.description ? hardWrap(p.description, WRAP).map(l => l) : []),
+    ...(p.description ? wrapParagraphs(p.description, WRAP).map(l => l) : []),
     '',
-    ...(skills ? [`${COLORS.dim}${skills}${COLORS.reset}`] : []),
+    ...(skills
+      ? hardWrap(`${skills}`, WRAP).map(l => `${COLORS.dim}${l}${COLORS.reset}`)
+      : []),
+    '',
   ];
   return {
     listLabel:    p.title,
@@ -672,8 +684,9 @@ function projectDescriptor(p) {
 function skillDescriptor(s) {
   const WRAP = 72;
   const yr  = s.skill_yearStart
-    ? `${new Date().getFullYear() - s.skill_yearStart} years`
-    : null;
+    ? s.skill_yearStart === new Date().getFullYear()      ? '<1 year'
+    : `${new Date().getFullYear() - s.skill_yearStart} years`: 'Since birth';
+    
   const used = s.projects?.length ? s.projects.map(p => p.name).join(', ') : null;
   const bodyLines = [
     ...(yr ? [`${COLORS.dim}Experience: ${yr}${COLORS.reset}`] : []),
@@ -866,7 +879,7 @@ async function runCoursesSection(stream, termSize) {
     stream.write('\x1b[2K');
     stream.write(
       `${COLORS.bold}${COLORS.yellow}[Use ↑↓ to select${COLORS.reset} ·` +
-      ` ${COLORS.bold}${COLORS.yellow}← → to open${COLORS.reset} ·` +
+      ` ${COLORS.bold}${COLORS.yellow}← → to change school${COLORS.reset} ·` +
       ` ${COLORS.bold}${COLORS.yellow}Enter to open${COLORS.reset} ·` +
       ` ${COLORS.bold}${COLORS.yellow}Esc to back]${COLORS.reset}` +
       ` ${pageHint}`
